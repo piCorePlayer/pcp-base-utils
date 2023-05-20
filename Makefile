@@ -1,17 +1,30 @@
 CC = gcc
-CFLAGS = -Os -pipe -march=armv6zk -mtune=arm1176jzf-s -mfpu=vfp
-DEPS =
-OBJ = pcpfetch.o
+ARCH ?= $(shell uname -m)
 
+ifeq ($(ARCH),aarch64)
+CFLAGS = -Os -pipe -march=armv8-a+crc -mtune=cortex-a72
+else
+CFLAGS = -Os -pipe -march=armv6zk -mtune=arm1176jzf-s -mfpu=vfp
+endif
+
+DEPS =
+objects = pcpfetch.o pcpget.o
 LIBS=-lcurl
 
-%.o: %.c $(DEPS)
-	$(CC) -c -o $@ $< $(CFLAGS)
+all: pcpfetch pcpget
 
-pcpfetch: $(OBJ)
+$(objects): %.o: %.c
+	$(CC) -c $(CFLAGS) $< -o $@
+
+pcpget: pcpget.o
 	$(CC) -o $@ $^ $(CFLAGS) $(LIBS)
+	strip --strip-unneeded $@
+
+pcpfetch: pcpfetch.o
+	$(CC) -o $@ $^ $(CFLAGS) $(LIBS)
+	strip --strip-unneeded $@
 
 .PHONY: clean
 
 clean:
-	rm -f *.o pcpfetch
+	rm -f *.o pcpfetch pcpget
