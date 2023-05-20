@@ -154,7 +154,7 @@ long downloadFile(CURL *curl, struct pcpget_options *opt) {
 		progress.istty = isatty(2);
 		progress.next_percent_report = 0;
 		progress.final = 0;
-		progress.filename = strdup(opt->file_name);
+		progress.filename = opt->file_name;
 
 		while (retry < opt->retries){
 			fp = fopen(opt->output, "wb");
@@ -206,6 +206,14 @@ long downloadFile(CURL *curl, struct pcpget_options *opt) {
 	}
 }
 
+void usage() {
+	fprintf(stderr, "pcpget <options> url\n\n");
+	fprintf(stderr, "  -q          Quiet\n");
+	fprintf(stderr, "  -r <number> Set number of retries on 522 or timeout errors.(default: 5)\n");
+	fprintf(stderr, "  -P <path>   Save files to path.\n");
+	fprintf(stderr, "  -T <second> Set timeout for stalled connections. (defaut 15s)\n\n");
+}
+
 int main(int argc, char * argv[]) {
 	int opt=0;
 	int code;
@@ -214,9 +222,11 @@ int main(int argc, char * argv[]) {
 	opts.quiet=0;
 	opts.timeout=30;
 	opts.retries=5;
-	opts.file_path = strdup(".");
+	char *dot = ".";
+	opts.file_path = dot;
+	opts.repo_url = NULL;
 
-	while ((opt = getopt(argc, argv, "cqr:P:T:")) != -1) {
+	while ((opt = getopt(argc, argv, "chqr:P:T:")) != -1) {
 		switch(opt){
 			case 'c':
 				break;
@@ -231,6 +241,11 @@ int main(int argc, char * argv[]) {
 				break;
 			case 'T':
 				opts.timeout = atoi(optarg);
+				break;
+			case '?':
+			case 'h':
+				usage();
+				return 0;
 			default:
 				fprintf(stderr, "Unknown option -%c\n", opt);
 				break;
@@ -251,13 +266,18 @@ int main(int argc, char * argv[]) {
 			return 1;
 		}
 		curl_url_cleanup(url);
-
-		if (opts.repo_url != NULL)
-			opts.file_name = strrchr(opts.repo_url, '/');
-		while (opts.file_name[0] == '/') opts.file_name++;
-		if (opts.quiet != 1)
-			fprintf(stderr, "%s, %s\n", opts.repo_url, opts.file_name);
 	}
+
+	if (opts.repo_url != NULL) {
+		opts.file_name = strrchr(opts.repo_url, '/');
+	} else {
+		fprintf(stderr, "Error: No Url provided.\n");
+		usage();
+		return 1;
+	}
+	while (opts.file_name[0] == '/') opts.file_name++;
+	if (opts.quiet != 1)
+		fprintf(stderr, "%s, %s\n", opts.repo_url, opts.file_name);
 
 	curl = curl_easy_init();
 	snprintf( opts.output, 512, "%s/%s", opts.file_path, opts.file_name);
