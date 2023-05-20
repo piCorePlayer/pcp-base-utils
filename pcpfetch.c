@@ -29,18 +29,53 @@ size_t write_data(void *ptr, size_t size, size_t nmemb, FILE *stream) {
     return written;
 }
 
+struct myprogress {
+	curl_off_t lastruntime;
+	CURL *curl;
+};
+#define MINIMAL_PROGRESS_FUNCTIONALITY_INTERVAL     300000
+/* this is how the CURLOPT_XFERINFOFUNCTION callback works */
+static int xferinfo(void *p,
+                    curl_off_t dltotal, curl_off_t dlnow,
+                    curl_off_t ultotal, curl_off_t ulnow)
+{
+	struct myprogress *myp = (struct myprogress *)p;
+	CURL *curl = myp->curl;
+	curl_off_t curtime = 0;
+    curl_easy_getinfo(curl, CURLINFO_TOTAL_TIME_T, &curtime);
+
+	if((curtime - myp->lastruntime) >= MINIMAL_PROGRESS_FUNCTIONALITY_INTERVAL) {
+		myp->lastruntime = curtime;
+//		if (dltotal > 0) {
+//			int percent =  (unsigned long)dlnow/(unsigned long)dltotal * (unsigned long)100;
+			//fprintf(stdout, "\e[%d;1H \e[2K \r \a", percent);
+			fprintf(stderr, "\r%lu of %lu", dlnow, dltotal);
+			fflush(stderr);
+//		}
+	}
+	return 0;
+}
+
 long downloadFile(CURL *curl, const char* url, const char* fname) {
     FILE *fp;
     CURLcode res;
+    struct myprogress prog;
+
 	long response = 0;
 	int retry = 0;
     if (curl){
+    	prog.curl = curl;
 		while (retry < 2){
 	        fp = fopen(fname, "wb");
 	        curl_easy_setopt(curl, CURLOPT_URL, url);
-			curl_easy_setopt(curl, CURLOPT_VERBOSE, 1);
+//			curl_easy_setopt(curl, CURLOPT_VERBOSE, 1);
 	        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_data);
 	        curl_easy_setopt(curl, CURLOPT_WRITEDATA, fp);
+			curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, xferinfo);
+			/* pass the struct pointer into the xferinfo function */
+			curl_easy_setopt(curl, CURLOPT_XFERINFODATA, &prog);
+
+			curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);
 	        res = curl_easy_perform(curl);
 			if (CURLE_OK == res) {
 				res = curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &response);
@@ -73,6 +108,7 @@ char **split( char **result, char *working, const char *src, const char *delim) 
 	return result;
 }
 
+
 int main(int argc, char * argv[]) {
 	int opt=0;
     CURL *curl;
@@ -92,6 +128,13 @@ int main(int argc, char * argv[]) {
 	optlinger.l_linger = 0;
 	const socklen_t optlingerlen = sizeof(optlinger);
 
+	if (geteuid() == 0) {
+		fprintf(stderr, "DO not run as root\n");
+		exit(1);
+	}
+
+
+
 	while ((opt = getopt(argc, argv, "p:")) != -1) {
 		switch(opt){
 			case 'p':
@@ -105,7 +148,29 @@ int main(int argc, char * argv[]) {
 		printf("Port not set\n");
 		return 1;
 	}
-
+	// Get kernel name
+	char KERNEL[50];
+	FILE *fp = popen("uname -r", "r");
+	fscanf(fp, "%50s", &KERNEL);
+	pclose(fp);
+//	printf("KERNEL:%s\n", KERNEL);
+	// Get onboot.lst
+	char ONBOOTNAME[50];
+	char CMDLINE[1024];
+	fp = popen("cat /proc/cmdline", "r");
+	fscanf(fp, "%[^\n]", &CMDLINE);
+	pclose(fp);
+	if (strstr(CMDLINE, "lst")) {
+		fp = popen("CMDL=$(cat /proc/cmdline);res=${CMDL##* lst=};echo ${res%%[    ]*}", "r");
+		fscanf(fp, "%50s", &ONBOOTNAME);
+		pclose(fp);
+	} else {
+		strcpy(ONBOOTNAME, "onboot.lst");
+	}
+//	printf("ONBOOTNAME:%s\n", ONBOOTNAME);
+	char *TCEINSTALLED = "/usr/local/tce.installed";
+	char *TCEDIR = "/etc/sysconfig/tcedir";
+	
 	curl = curl_easy_init();
 
     // Create a socket
