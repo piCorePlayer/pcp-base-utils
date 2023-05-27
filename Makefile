@@ -2,9 +2,11 @@ CC = gcc
 ARCH ?= $(shell uname -m)
 
 ifeq ($(ARCH),aarch64)
-CFLAGS = -Os -pipe -march=armv8-a+crc -mtune=cortex-a72
+  CFLAGS = -Os -s -pipe -march=armv8-a+crc -mtune=cortex-a72
+else ifeq ($(ARCH), x86_64)
+  CFLAGS = -O2 -s
 else
-CFLAGS = -Os -pipe -march=armv6zk -mtune=arm1176jzf-s -mfpu=vfp
+  CFLAGS = -Os -s -pipe -march=armv6zk -mtune=arm1176jzf-s -mfpu=vfp
 endif
 
 DEPS =

@@ -1,5 +1,6 @@
 // pcpget.c
 #include <inttypes.h>
+#include <libgen.h>
 #include <errno.h>
 #include <stdio.h>
 #include <string.h>
@@ -93,7 +94,7 @@ static int xferinfo(void *p,
 		if (percent == 100) bar_pos = 34;
 		if (percent > myp->next_percent_report) {
 			if (myp->istty) {
-				char tmp[37];
+				char tmp[45];
 				strncpy(tmp, bar[bar_pos], 15);
 				tmp[15]='\0';
 				strcat(tmp, percentstr);
@@ -127,6 +128,7 @@ static int xferinfo(void *p,
 
 struct pcpget_options {
 	int quiet;
+	int verbose;
 	int timeout;
 	int retries;
 	char *repo_url;
@@ -160,7 +162,8 @@ long downloadFile(CURL *curl, struct pcpget_options *opt) {
 			fp = fopen(opt->output, "wb");
 			if (fp) {
 				curl_easy_setopt(curl, CURLOPT_URL, opt->repo_url);
-//				curl_easy_setopt(curl, CURLOPT_VERBOSE, 1);
+				if (opt->verbose)
+					curl_easy_setopt(curl, CURLOPT_VERBOSE, 1);
 				curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_data);
 				curl_easy_setopt(curl, CURLOPT_WRITEDATA, fp);
 				curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, xferinfo);
@@ -189,12 +192,8 @@ long downloadFile(CURL *curl, struct pcpget_options *opt) {
 					fprintf(stderr, ".");
 					retry++;
 					continue;
-				} else if (response == 404){
-					remove(opt->output);
 				} else if (response != 200) {
-					char newname[100];
-					snprintf( newname, 100, "%s.bad", opt->output);
-					rename(opt->output, newname);
+					remove(opt->output);
 				}
 				break;
 			} else {
@@ -208,8 +207,10 @@ long downloadFile(CURL *curl, struct pcpget_options *opt) {
 
 void usage() {
 	fprintf(stderr, "pcpget <options> url\n\n");
-	fprintf(stderr, "  -q          Quiet\n");
+	fprintf(stderr, "  -q          Quiet.\n");
+	fprintf(stderr, "  -v          Verbose curl output.\n");
 	fprintf(stderr, "  -r <number> Set number of retries on 522 or timeout errors.(default: 5)\n");
+	fprintf(stderr, "  -O <file>   Save output as file.\n");
 	fprintf(stderr, "  -P <path>   Save files to path.\n");
 	fprintf(stderr, "  -T <second> Set timeout for stalled connections. (defaut 15s)\n\n");
 }
@@ -220,21 +221,30 @@ int main(int argc, char * argv[]) {
 	CURL *curl;
 	struct pcpget_options opts;
 	opts.quiet=0;
+	opts.verbose=0;
 	opts.timeout=30;
 	opts.retries=5;
 	char *dot = ".";
 	opts.file_path = dot;
 	opts.repo_url = NULL;
+	opts.output[0]= '\0';
 
-	while ((opt = getopt(argc, argv, "chqr:P:T:")) != -1) {
+	while ((opt = getopt(argc, argv, "chqvr:O:P:T:")) != -1) {
 		switch(opt){
 			case 'c':
 				break;
 			case 'q':
 				opts.quiet = 1;
 				break;
+			case 'v':
+				opts.verbose = 1;
+				break;
 			case 'r':
 				opts.retries = atoi(optarg);
+				break;
+			case 'O':
+				strncpy(opts.output, optarg, 512);
+				opts.file_name = basename(optarg);
 				break;
 			case 'P':
 				opts.file_path = optarg;
@@ -280,7 +290,9 @@ int main(int argc, char * argv[]) {
 		fprintf(stderr, "%s, %s\n", opts.repo_url, opts.file_name);
 
 	curl = curl_easy_init();
-	snprintf( opts.output, 512, "%s/%s", opts.file_path, opts.file_name);
+	if (opts.output[0] == '\0') {
+		snprintf( opts.output, 512, "%s/%s", opts.file_path, opts.file_name);
+	}
 	code = downloadFile(curl, &opts);
 
 	curl_easy_cleanup(curl);

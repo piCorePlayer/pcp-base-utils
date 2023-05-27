@@ -1,3 +1,5 @@
 *.o
 pcpfetch
 pcpget
+pcpget.aarch64
+pcpget.armhf
