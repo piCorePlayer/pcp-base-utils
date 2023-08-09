@@ -76,6 +76,9 @@ struct pcp_progress {
 	int next_percent_report;
 	int istty;
 	int final;
+	curl_off_t start_time;
+	int quiet;
+	int conn_timeout;
 	CURL *curl;
 };
 
@@ -85,42 +88,59 @@ static int xferinfo(void *p,
 {
 	struct pcp_progress *myp = (struct pcp_progress *)p;
 	CURL *curl = myp->curl;
+	curl_off_t curtime = 0;
 	char percentstr[6];
 
-	if ((dltotal > 0) && (myp->final != 1)) {
-		float percent = (float)dlnow/(float)dltotal * (float)100;
-		snprintf(percentstr, 5, "%03.0f%%", percent);
-		int bar_pos = (int)percent/3;
-		if (percent == 100) bar_pos = 34;
-		if (percent > myp->next_percent_report) {
-			if (myp->istty) {
-				char tmp[45];
-				strncpy(tmp, bar[bar_pos], 15);
-				tmp[15]='\0';
-				strcat(tmp, percentstr);
-				strcat(tmp, &bar[bar_pos][15]);
-//				fprintf(stderr, "\r%3.2f\%: %" CURL_FORMAT_CURL_OFF_T " of %" CURL_FORMAT_CURL_OFF_T, percent, dlnow, dltotal);
-				fprintf(stderr,"\r%s %s: %s", tmp, myp->filename, calculateSize(dltotal));
-				if (percent == 100) {
-					fprintf(stderr, " Done\n");
-					myp->final = 1;
-				}
-			} else {
-				if (myp->begin == 0) {
-					fprintf(stderr, "%s: %s [", myp->filename, calculateSize(dltotal));
-					myp->begin = 1;
-				}
-				for (int i = myp->next_percent_report; i <= (int)percent; i += 3) {
-					fprintf(stderr, "*");
-				}
-				if (percent == 100) {
-					fprintf(stderr, "] Done\n");
-					myp->final = 1;
-				}
+	curl_easy_getinfo(curl, CURLINFO_TOTAL_TIME_T, &curtime);
+	if (myp->start_time == 0) {
+		myp->start_time = curtime;
+	} else {
+		if ( dltotal == 0){
+			curl_off_t diff = curtime - myp->start_time;
+			if (diff > 4000000) {
+//				fprintf(stderr, "%lu\n", diff);
+				myp->conn_timeout = 1;
+				return 1;
 			}
-			fflush(stderr);
-			int next = (int)percent + 3;
-			myp->next_percent_report = next > 99 ? 99 : next ;
+		}
+	}
+
+	if (myp->quiet != 1) {
+		if ((dltotal > 0) && (myp->final != 1)) {
+			float percent = (float)dlnow/(float)dltotal * (float)100;
+			snprintf(percentstr, 5, "%03.0f%%", percent);
+			int bar_pos = (int)percent/3;
+			if (percent == 100) bar_pos = 34;
+			if (percent > myp->next_percent_report) {
+				if (myp->istty) {
+					char tmp[45];
+					strncpy(tmp, bar[bar_pos], 15);
+					tmp[15]='\0';
+					strcat(tmp, percentstr);
+					strcat(tmp, &bar[bar_pos][15]);
+//				fprintf(stderr, "\r%3.2f\%: %" CURL_FORMAT_CURL_OFF_T " of %" CURL_FORMAT_CURL_OFF_T, percent, dlnow, dltotal);
+					fprintf(stderr,"\r%s %s: %s", tmp, myp->filename, calculateSize(dltotal));
+					if (percent == 100) {
+						fprintf(stderr, " Done\n");
+						myp->final = 1;
+					}
+				} else {
+					if (myp->begin == 0) {
+						fprintf(stderr, "%s: %s [", myp->filename, calculateSize(dltotal));
+						myp->begin = 1;
+					}
+					for (int i = myp->next_percent_report; i <= (int)percent; i += 3) {
+						fprintf(stderr, "*");
+					}
+					if (percent == 100) {
+						fprintf(stderr, "] Done\n");
+						myp->final = 1;
+					}
+				}
+				fflush(stderr);
+				int next = (int)percent + 3;
+				myp->next_percent_report = next > 99 ? 99 : next ;
+			}
 		}
 	}
 	return 0;
@@ -157,6 +177,9 @@ long downloadFile(CURL *curl, struct pcpget_options *opt) {
 		progress.next_percent_report = 0;
 		progress.final = 0;
 		progress.filename = opt->file_name;
+		progress.start_time = 0;
+		progress.quiet = opt->quiet;
+		progress.conn_timeout = 0;
 
 		while (retry < opt->retries){
 			fp = fopen(opt->output, "wb");
@@ -169,10 +192,7 @@ long downloadFile(CURL *curl, struct pcpget_options *opt) {
 				curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, xferinfo);
 				/* pass the struct pointer into the xferinfo function */
 				curl_easy_setopt(curl, CURLOPT_XFERINFODATA, &progress);
-				if (opt->quiet != 1)
-					curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L); // set to 0 to show
-				else
-					curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 1L);
+				curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L); // set to 0 to show
 
 				curl_easy_setopt(curl, CURLOPT_LOW_SPEED_TIME, (long)opt->timeout);
 				curl_easy_setopt(curl, CURLOPT_LOW_SPEED_LIMIT, 30L);
@@ -180,7 +200,9 @@ long downloadFile(CURL *curl, struct pcpget_options *opt) {
 				res = curl_easy_perform(curl);
 				fclose(fp);
 
-				if (CURLE_OPERATION_TIMEDOUT == res) { // timeout
+				if ( (CURLE_OPERATION_TIMEDOUT == res) || (progress.conn_timeout == 1) ){ // timeout
+					progress.start_time = 0;
+					progress.conn_timeout = 0;
 					fprintf(stderr, "Timeout!\n");
 					retry++;
 					continue;
@@ -287,7 +309,7 @@ int main(int argc, char * argv[]) {
 	}
 	while (opts.file_name[0] == '/') opts.file_name++;
 	if (opts.quiet != 1)
-		fprintf(stderr, "%s, %s\n", opts.repo_url, opts.file_name);
+		fprintf(stderr, "%s\n", opts.repo_url);
 
 	curl = curl_easy_init();
 	if (opts.output[0] == '\0') {
