@@ -203,7 +203,8 @@ long downloadFile(CURL *curl, struct pcpget_options *opt) {
 				if ( (CURLE_OPERATION_TIMEDOUT == res) || (progress.conn_timeout == 1) ){ // timeout
 					progress.start_time = 0;
 					progress.conn_timeout = 0;
-					fprintf(stderr, "Timeout!\n");
+//					fprintf(stderr, "Timeout!\n");
+					fprintf(stderr, ".");
 					retry++;
 					continue;
 				}
@@ -239,7 +240,7 @@ void usage() {
 
 int main(int argc, char * argv[]) {
 	int opt=0;
-	int code;
+	long code;
 	CURL *curl;
 	struct pcpget_options opts;
 	opts.quiet=0;
@@ -312,13 +313,22 @@ int main(int argc, char * argv[]) {
 		fprintf(stderr, "%s\n", opts.repo_url);
 
 	curl = curl_easy_init();
+	if (opts.output[0] == '-' ) {
+		opts.output[0]= '\0';
+	}
 	if (opts.output[0] == '\0') {
 		snprintf( opts.output, 512, "%s/%s", opts.file_path, opts.file_name);
 	}
+//	fprintf(stderr, "%s\n", opts.output);
 	code = downloadFile(curl, &opts);
+//	fprintf(stderr, "Ret Code:%lu\n", code);
 
 	curl_easy_cleanup(curl);
 
-	return 0;
+	if (code == 200){
+		return 0;
+	} else {
+		return 1;
+	}
 }
 
